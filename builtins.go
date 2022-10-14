@@ -1364,7 +1364,7 @@ func tomlRenderValue(i *interpreter, val value, indexedPath []string, inline boo
 		return fmt.Sprintf("%t", v.value), nil
 	case *valueNumber:
 		// TODO: no idea for 1.42
-		return strconv.FormatFloat(v.value, 'g', -1, 64), nil
+		return strconv.FormatFloat(v.value, 'f', -1, 64), nil
 	case valueString:
 		return tomlEncodeString(v.getGoString()), nil
 	case *valueFunction:
@@ -1480,7 +1480,7 @@ func builtinManifestTomlEx(i *interpreter, arguments []value) (value, error) {
 		}
 		return makeValueString(res), nil
 	default:
-		return nil, i.Error(fmt.Sprintf("TOML body must be an object. Got %s", reflect.TypeOf(v)))
+		return nil, i.Error(fmt.Sprintf("TOML body must be an object. Got %s", v.getType().name))
 	}
 }
 
