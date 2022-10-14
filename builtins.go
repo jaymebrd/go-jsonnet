@@ -1302,6 +1302,69 @@ func jsonEncode(v interface{}) (string, error) {
 	return strings.TrimRight(buf.String(), "\n"), nil
 }
 
+func escapeStringToml(s string) string {
+	res := ""
+
+	for _, c := range s {
+		if c == '"' {
+			res = res + "\\\""
+		} else if c == '\\' {
+			res = res + "\\\\"
+			} else if c ==  {
+				// \b
+				res = res + "\\\\"
+		} else {
+			res = res + string(c)
+		}
+	}
+	return res
+}
+
+func tomlEncodeKey(s string) string {
+	bareAllowed := true
+
+	// for empty string, return ''
+	// TODO: is this matching how jsonnet implementation behaves?
+	if len(s) == 0 {
+		return "''"
+	}
+
+	for _, c := range s {
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			continue
+		}
+
+		bareAllowed = false
+		break
+	}
+
+	if bareAllowed {
+		return s
+	}
+	return tomlEscapeString(s)
+}
+
+func builtinManifestTomlEx(i *interpreter, arguments []value) (value, error) {
+	// TODO: remove
+	if i == nil || len(arguments) == 666 {
+		return nil, fmt.Errorf("HAHAHAHA")
+	}
+
+	val := arguments[0]
+	vindent, err := i.getString(arguments[1])
+	if err != nil {
+		return nil, err
+	}
+	_ = vindent.getGoString()
+
+	switch v := val.(type) {
+	case *valueObject:
+		return makeValueString("foo = \"bar\""), nil
+	default:
+		return nil, i.Error(fmt.Sprintf("TOML body must be an object. Got %s", reflect.TypeOf(v)))
+	}
+}
+
 // We have a very similar logic here /interpreter.go@v0.16.0#L695 and here: /interpreter.go@v0.16.0#L627
 // These should ideally be unified
 // For backwards compatibility reasons, we are manually marshalling to json so we can control formatting
@@ -1735,6 +1798,7 @@ var funcBuiltins = buildBuiltinMap([]builtin{
 	&generalBuiltin{name: "manifestJsonEx", function: builtinManifestJSONEx, params: []generalBuiltinParameter{{name: "value"}, {name: "indent"},
 		{name: "newline", defaultValue: &valueFlatString{value: []rune("\n")}},
 		{name: "key_val_sep", defaultValue: &valueFlatString{value: []rune(": ")}}}},
+	&generalBuiltin{name: "manifestTomlEx", function: builtinManifestTomlEx, params: []generalBuiltinParameter{{name: "value"}, {name: "indent"}}},
 	&unaryBuiltin{name: "base64", function: builtinBase64, params: ast.Identifiers{"input"}},
 	&unaryBuiltin{name: "encodeUTF8", function: builtinEncodeUTF8, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "decodeUTF8", function: builtinDecodeUTF8, params: ast.Identifiers{"arr"}},
