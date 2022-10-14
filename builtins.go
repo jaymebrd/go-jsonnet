@@ -1642,12 +1642,18 @@ func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []st
 			if err != nil {
 				return "", err
 			}
-			resFields = append(resFields, strings.Split(cindent+tomlEncodeKey(fieldName)+" = "+renderedValue, "\n")...)
+			resFields = append(resFields, strings.Split(tomlEncodeKey(fieldName)+" = "+renderedValue, "\n")...)
 		}
 	}
 
 	// TODO: +cindent for resSections?
-	return strings.Join(resFields, "\n"+cindent) + strings.Join(resSections, "\n\n"), nil
+	res := ""
+
+	if len(resFields) > 0 {
+		res = "" + cindent
+	}
+	res = res + strings.Join(resFields, "\n"+cindent) + strings.Join(resSections, "\n\n")
+	return res, nil
 }
 
 func builtinManifestTomlEx(i *interpreter, arguments []value) (value, error) {
