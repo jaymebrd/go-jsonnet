@@ -1302,21 +1302,33 @@ func jsonEncode(v interface{}) (string, error) {
 	return strings.TrimRight(buf.String(), "\n"), nil
 }
 
-func escapeStringToml(s string) string {
-	res := ""
+func tomlEncodeString(s string) string {
+	res := "\""
 
 	for _, c := range s {
 		if c == '"' {
 			res = res + "\\\""
 		} else if c == '\\' {
 			res = res + "\\\\"
-			} else if c ==  {
-				// \b
-				res = res + "\\\\"
+		} else if c == '\b' {
+			res = res + "\\b"
+		} else if c == '\f' {
+			res = res + "\\f"
+		} else if c == '\n' {
+			res = res + "\\n"
+		} else if c == '\r' {
+			res = res + "\\r"
+		} else if c == '\t' {
+			res = res + "\\t"
+		} else if c < 32 || (c >= 127 && c <= 159) {
+			res = res + fmt.Sprintf("\\u%04x", c)
 		} else {
 			res = res + string(c)
 		}
 	}
+
+	res = res + "\""
+
 	return res
 }
 
@@ -1341,25 +1353,132 @@ func tomlEncodeKey(s string) string {
 	if bareAllowed {
 		return s
 	}
-	return tomlEscapeString(s)
+	return tomlEncodeString(s)
+}
+
+func tomlRenderValue(i *interpreter, val value, indexedPath []string, inline bool, cindent string) (string, error) {
+	switch v := val.(type) {
+	case *valueNull:
+		return "", i.Error(fmt.Sprintf("Tried to manifest \"null\" at %v", indexedPath))
+	case *valueBoolean:
+		return fmt.Sprintf("%t", v.value), nil
+	case *valueNumber:
+		// TODO: no idea for 1.42
+		return strconv.FormatFloat(v.value, 'g', -1, 64), nil
+	case valueString:
+		return tomlEncodeString(v.getGoString()), nil
+	case *valueFunction:
+		return "", i.Error(fmt.Sprintf("Tried to manifest function at %v", indexedPath))
+	case *valueArray:
+		// TODO: implement
+		return "", i.Error(fmt.Sprintf("NOT IMPLEMENTED YET at %v", indexedPath))
+	case *valueObject:
+		// TODO: implement
+		return "", i.Error(fmt.Sprintf("NOT IMPLEMENTED YET at %v", indexedPath))
+	default:
+		return "", i.Error(fmt.Sprintf("Unknown object type %v at %v", reflect.TypeOf(v), indexedPath))
+	}
+}
+
+func tomlIsSection(i *interpreter, val value) (bool, error) {
+	switch v := val.(type) {
+	case *valueObject:
+		return true, nil
+	case *valueArray:
+		if v.length() == 0 {
+			return false, nil
+		}
+
+		// std.all(std.map(std.isObject, v))
+		for _, thunk := range v.elements {
+			thunkValue, err := thunk.getValue(i)
+			if err != nil {
+				return false, err
+			}
+
+			switch thunkValue.(type) {
+			case *valueObject:
+				// do nothing
+			default:
+				return false, nil
+			}
+		}
+
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []string, indexedPath []string, cindent string) (string, error) {
+	resFields := []string{}
+	resSections := []string{}
+	fields := objectFields(v, withoutHidden)
+	sort.Strings(fields)
+
+	// iterate over non-section items
+	for _, fieldName := range fields {
+		fieldValue, err := v.index(i, fieldName)
+		if err != nil {
+			return "", err
+		}
+
+		isSection, err := tomlIsSection(i, fieldValue)
+		if err != nil {
+			return "", err
+		}
+
+		childIndexedPath := make([]string, 0, len(indexedPath)+1)
+		childIndexedPath = append(childIndexedPath, indexedPath...)
+		childIndexedPath = append(childIndexedPath, fieldName)
+
+		if isSection {
+			// local sections = [std.join('\n', kvp)] + [
+			// 	(if std.isObject(v[k]) then
+			// 		renderTable(v[k], path + [k], indexedPath + [k], cindent)
+			// 	else
+			// 		renderTableArray(v[k], path + [k], indexedPath + [k], cindent)
+			// 	)
+			// 	for k in std.objectFields(v)
+			// 	if isSection(v[k])
+			// ];
+			// std.join('\n\n', sections),
+
+			resSections = append(resSections, "NOT IMPLEMENTED :-)")
+		} else {
+			// local kvp = std.flattenArrays([
+			// 	[cindent + escapeKeyToml(k) + ' = ' + renderValue(v[k], indexedPath + [k], false, cindent)]
+			// 	for k in std.objectFields(v)
+			// 	if !isSection(v[k])
+			// ]);
+
+			renderedValue, err := tomlRenderValue(i, fieldValue, childIndexedPath, true, "")
+			if err != nil {
+				return "", err
+			}
+			resFields = append(resFields, strings.Split(tomlEncodeKey(fieldName)+" = "+renderedValue, "\n")...)
+		}
+	}
+
+	// TODO: +cindent for resSections?
+	return strings.Join(resFields, "\n"+cindent) + strings.Join(resSections, "\n\n"), nil
 }
 
 func builtinManifestTomlEx(i *interpreter, arguments []value) (value, error) {
-	// TODO: remove
-	if i == nil || len(arguments) == 666 {
-		return nil, fmt.Errorf("HAHAHAHA")
-	}
-
 	val := arguments[0]
 	vindent, err := i.getString(arguments[1])
 	if err != nil {
 		return nil, err
 	}
-	_ = vindent.getGoString()
+	sindent := vindent.getGoString()
 
 	switch v := val.(type) {
 	case *valueObject:
-		return makeValueString("foo = \"bar\""), nil
+		res, err := tomlTableInternal(i, v, sindent, []string{}, []string{}, "")
+		if err != nil {
+			return nil, err
+		}
+		return makeValueString(res), nil
 	default:
 		return nil, i.Error(fmt.Sprintf("TOML body must be an object. Got %s", reflect.TypeOf(v)))
 	}
