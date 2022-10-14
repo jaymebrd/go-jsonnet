@@ -4,32 +4,21 @@ local object = {
   bar: self.foo,
   baz: 1,
   // TODO: uncomment
-  // bazel: 1.42,
+  bazel: 1.42,
   boom: -1,
   bim: false,
   bam: true,
   blamo: {
-    whatever: 'fine',
-    why: 'crap',
-    section31: [
+    cereal: [
+      '<>& fizbuzz',
+      ['a', ['b']],
+    ],
+
+    treats: [
       {
-        a: 'b',
-        section4: [
-          {c: 'd'},
-          {c: 'd'},
-        ],
+        name: 'chocolate',
       },
     ],
-    // TODO: remove above, uncomment below
-    // cereal: [
-    //   '<>& fizbuzz',
-    // ],
-
-    // treats: [
-    //   {
-    //     name: 'chocolate',
-    //   },
-    // ],
   },
 };
 
@@ -89,7 +78,7 @@ local array = [
 //  array: std.manifestJsonEx(array, '  '),
   // bool: std.manifestJsonEx(true, '   '),
 //  'null': std.manifestJsonEx(null, '   '),
-   object: std.manifestTomlEx(object2, '  '),
+   object: std.manifestTomlEx(object, '  '),
    //number: std.manifestTomlEx(42, '   '),
 //  string: std.manifestJsonEx('foo', '   '),
 }

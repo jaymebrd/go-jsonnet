@@ -1404,6 +1404,10 @@ func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []st
 			childIndexedPath = append(childIndexedPath, indexedPath...)
 			childIndexedPath = append(childIndexedPath, strconv.FormatInt(int64(j), 10))
 
+			if j > 0 {
+				res = res + "," + separator
+			}
+
 			res = res + newIndent
 			value, err := tomlRenderValue(i, thunkValue, sindent, childIndexedPath, true, "")
 			if err != nil {
@@ -1420,9 +1424,45 @@ func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []st
 
 		return res, nil
 	case *valueObject:
+		// local lines = ['{ ']
+		//               + std.join([', '],
+		//                         [
+		//                           [escapeKeyToml(k) + ' = ' + renderValue(v[k], indexedPath + [k], true, '')]
+		//                           for k in std.objectFields(v)
+		//                         ])
+		//               + [' }'];
+		// std.join('', lines),
+		res := ""
+
+		fields := objectFields(v, withoutHidden)
+		sort.Strings(fields)
+
+		// iterate over non-section items
+		for j, fieldName := range fields {
+			fieldValue, err := v.index(i, fieldName)
+			if err != nil {
+				return "", err
+			}
+
+			childIndexedPath := make([]string, 0, len(indexedPath)+1)
+			childIndexedPath = append(childIndexedPath, indexedPath...)
+			childIndexedPath = append(childIndexedPath, fieldName)
+
+			value, err := tomlRenderValue(i, fieldValue, sindent, childIndexedPath, true, "")
+			if err != nil {
+				return "", err
+			}
+
+			if j > 0 {
+				res = res + ", "
+			}
+			res = res + tomlEncodeKey(fieldName) + " = " + value
+		}
+
+		return "{ " + res + " }", nil
 		// TODO: implement
 		// return "", i.Error(fmt.Sprintf("NOT IMPLEMENTED YET at %v", indexedPath))
-		return "{}", nil
+		// 		return "{}", nil
 	default:
 		return "", i.Error(fmt.Sprintf("Unknown object type %v at %v", reflect.TypeOf(v), indexedPath))
 	}
@@ -1598,7 +1638,7 @@ func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []st
 			// 	if !isSection(v[k])
 			// ]);
 
-			renderedValue, err := tomlRenderValue(i, fieldValue, sindent, childIndexedPath, true, "")
+			renderedValue, err := tomlRenderValue(i, fieldValue, sindent, childIndexedPath, false, "")
 			if err != nil {
 				return "", err
 			}
@@ -1607,7 +1647,7 @@ func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []st
 	}
 
 	// TODO: +cindent for resSections?
-	return strings.Join(resFields, "\n") + strings.Join(resSections, "\n\n"), nil
+	return strings.Join(resFields, "\n"+cindent) + strings.Join(resSections, "\n\n"), nil
 }
 
 func builtinManifestTomlEx(i *interpreter, arguments []value) (value, error) {
