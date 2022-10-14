@@ -1363,8 +1363,7 @@ func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []st
 	case *valueBoolean:
 		return fmt.Sprintf("%t", v.value), nil
 	case *valueNumber:
-		// TODO: no idea for 1.42
-		return strconv.FormatFloat(v.value, 'f', -1, 64), nil
+		return unparseNumber(v.value), nil
 	case valueString:
 		return tomlEncodeString(v.getGoString()), nil
 	case *valueFunction:
