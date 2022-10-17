@@ -1,5 +1,13 @@
 RUNTIME ERROR: TOML body must be an object. Got null
-        <std>:955:7-66  function <anonymous>
-        testdata/builtin_manifestTomlEx_null.jsonnet:2:11-42    object <anonymous>
-        Field "null"    
-        During manifestation
+-------------------------------------------------
+	testdata/builtin_manifestTomlEx_null:2:11-42	object <anonymous>
+
+  'null': std.manifestTomlEx(null, '   '),
+
+-------------------------------------------------
+	Field "null"	
+
+-------------------------------------------------
+	During manifestation	
+
+
