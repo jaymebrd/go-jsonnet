@@ -1302,10 +1302,45 @@ func jsonEncode(v interface{}) (string, error) {
 	return strings.TrimRight(buf.String(), "\n"), nil
 }
 
+// tomlIsSection checks whether an object or array is a section - a TOML section is an
+// object or an an array has all of its children being objects
+func tomlIsSection(i *interpreter, val value) (bool, error) {
+	switch v := val.(type) {
+	case *valueObject:
+		return true, nil
+	case *valueArray:
+		if v.length() == 0 {
+			return false, nil
+		}
+
+		for _, thunk := range v.elements {
+			thunkValue, err := thunk.getValue(i)
+			if err != nil {
+				return false, err
+			}
+
+			switch thunkValue.(type) {
+			case *valueObject:
+				// this is expected, return true if all children are objects
+			default:
+				// return false if at least one child is not an object
+				return false, nil
+			}
+		}
+
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+// tomlEncodeString encodes a string as quoted TOML string
 func tomlEncodeString(s string) string {
 	res := "\""
 
 	for _, c := range s {
+		// escape specific characters, rendering non-ASCII ones as \uXXXX,
+		// appending remaining characters as is
 		if c == '"' {
 			res = res + "\\\""
 		} else if c == '\\' {
@@ -1332,11 +1367,12 @@ func tomlEncodeString(s string) string {
 	return res
 }
 
+// tomlEncodeKey encodes a key - returning same string if it does not need quoting,
+// otherwise return it quoted; returns empty key as ''
 func tomlEncodeKey(s string) string {
 	bareAllowed := true
 
 	// for empty string, return ''
-	// TODO: is this matching how jsonnet implementation behaves?
 	if len(s) == 0 {
 		return "''"
 	}
@@ -1356,6 +1392,14 @@ func tomlEncodeKey(s string) string {
 	return tomlEncodeString(s)
 }
 
+func tomlAddToPath(path []string, tail string) []string {
+	result := make([]string, 0, len(path)+1)
+	result = append(result, path...)
+	result = append(result, tail)
+	return result
+}
+
+// tomlRenderValue returns a rendered value as string, with proper indenting
 func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []string, inline bool, cindent string) (string, error) {
 	switch v := val.(type) {
 	case *valueNull:
@@ -1369,21 +1413,11 @@ func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []st
 	case *valueFunction:
 		return "", i.Error(fmt.Sprintf("Tried to manifest function at %v", indexedPath))
 	case *valueArray:
-		// local range = std.range(0, std.length(v) - 1);
-		// local new_indent = if inline then '' else cindent + indent;
-		// local separator = if inline then ' ' else '\n';
-		// local lines = ['[' + separator]
-		// 							+ std.join([',' + separator],
-		// 												[
-		// 													[new_indent + renderValue(v[i], indexedPath + [i], true, '')]
-		// 													for i in range
-		// 												])
-		// 							+ [separator + (if inline then '' else cindent) + ']'];
-		// std.join('', lines)
 		if len(v.elements) == 0 {
 			return "[]", nil
 		}
 
+		// initialize indenting and separators based on whether this is added inline or not
 		newIndent := cindent + sindent
 		separator := "\n"
 		if inline {
@@ -1391,17 +1425,17 @@ func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []st
 			separator = " "
 		}
 
+		// open the square bracket to start array values
 		res := "[" + separator
 
+		// iterate over elents and add their values to result
 		for j, thunk := range v.elements {
 			thunkValue, err := thunk.getValue(i)
 			if err != nil {
 				return "", err
 			}
 
-			childIndexedPath := make([]string, 0, len(indexedPath)+1)
-			childIndexedPath = append(childIndexedPath, indexedPath...)
-			childIndexedPath = append(childIndexedPath, strconv.FormatInt(int64(j), 10))
+			childIndexedPath := tomlAddToPath(indexedPath, strconv.FormatInt(int64(j), 10))
 
 			if j > 0 {
 				res = res + "," + separator
@@ -1419,33 +1453,25 @@ func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []st
 		if inline {
 			res = res + cindent
 		}
+
+		// close the array and return it
 		res = res + "]"
 
 		return res, nil
 	case *valueObject:
-		// local lines = ['{ ']
-		//               + std.join([', '],
-		//                         [
-		//                           [escapeKeyToml(k) + ' = ' + renderValue(v[k], indexedPath + [k], true, '')]
-		//                           for k in std.objectFields(v)
-		//                         ])
-		//               + [' }'];
-		// std.join('', lines),
 		res := ""
 
 		fields := objectFields(v, withoutHidden)
 		sort.Strings(fields)
 
-		// iterate over non-section items
+		// iterate over sorted field keys and render their values
 		for j, fieldName := range fields {
 			fieldValue, err := v.index(i, fieldName)
 			if err != nil {
 				return "", err
 			}
 
-			childIndexedPath := make([]string, 0, len(indexedPath)+1)
-			childIndexedPath = append(childIndexedPath, indexedPath...)
-			childIndexedPath = append(childIndexedPath, fieldName)
+			childIndexedPath := tomlAddToPath(indexedPath, fieldName)
 
 			value, err := tomlRenderValue(i, fieldValue, sindent, childIndexedPath, true, "")
 			if err != nil {
@@ -1458,56 +1484,18 @@ func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []st
 			res = res + tomlEncodeKey(fieldName) + " = " + value
 		}
 
+		// wrap fields in an array
 		return "{ " + res + " }", nil
-		// TODO: implement
-		// return "", i.Error(fmt.Sprintf("NOT IMPLEMENTED YET at %v", indexedPath))
-		// 		return "{}", nil
 	default:
 		return "", i.Error(fmt.Sprintf("Unknown object type %v at %v", reflect.TypeOf(v), indexedPath))
 	}
 }
 
-func tomlIsSection(i *interpreter, val value) (bool, error) {
-	switch v := val.(type) {
-	case *valueObject:
-		return true, nil
-	case *valueArray:
-		if v.length() == 0 {
-			return false, nil
-		}
-
-		// std.all(std.map(std.isObject, v))
-		for _, thunk := range v.elements {
-			thunkValue, err := thunk.getValue(i)
-			if err != nil {
-				return false, err
-			}
-
-			switch thunkValue.(type) {
-			case *valueObject:
-				// do nothing
-			default:
-				return false, nil
-			}
-		}
-
-		return true, nil
-	default:
-		return false, nil
-	}
-}
-
 func tomlRenderTableArray(i *interpreter, v *valueArray, sindent string, path []string, indexedPath []string, cindent string) (string, error) {
-	// local range = std.range(0, std.length(v) - 1);
-	// local sections = [
-	// 	(cindent + '[[' + std.join('.', std.map(escapeKeyToml, path)) + ']]'
-	// 	+ (if v[i] == {} then '' else '\n')
-	// 	+ renderTableInternal(v[i], path, indexedPath + [i], cindent + indent))
-	// 	for i in range
-	// ];
 
 	sections := make([]string, 0, len(v.elements))
 
+	// render all elements of an array
 	for j, thunk := range v.elements {
 		thunkValue, err := thunk.getValue(i)
 		if err != nil {
@@ -1516,6 +1504,7 @@ func tomlRenderTableArray(i *interpreter, v *valueArray, sindent string, path []
 
 		switch tv := thunkValue.(type) {
 		case *valueObject:
+			// render the entire path as section name
 			section := cindent + "[["
 
 			for i, element := range path {
@@ -1525,18 +1514,16 @@ func tomlRenderTableArray(i *interpreter, v *valueArray, sindent string, path []
 				section = section + tomlEncodeKey(element)
 			}
 
-			// keys
 			section = section + "]]"
 
-			// TODO: with or without hidden?
+			// add newline if the table has elements
 			if len(objectFields(tv, withoutHidden)) > 0 {
 				section = section + "\n"
 			}
 
-			childIndexedPath := make([]string, 0, len(indexedPath)+1)
-			childIndexedPath = append(childIndexedPath, indexedPath...)
-			childIndexedPath = append(childIndexedPath, strconv.FormatInt(int64(j), 10))
+			childIndexedPath := tomlAddToPath(indexedPath, strconv.FormatInt(int64(j), 10))
 
+			// render the table and add it to result
 			table, err := tomlTableInternal(i, tv, sindent, path, childIndexedPath, cindent+sindent)
 			if err != nil {
 				return "", err
@@ -1547,9 +1534,9 @@ func tomlRenderTableArray(i *interpreter, v *valueArray, sindent string, path []
 		default:
 			return "", i.Error(fmt.Sprintf("invalid type for section: %v", reflect.TypeOf(thunkValue)))
 		}
-
 	}
 
+	// combine all sections
 	return strings.Join(sections, "\n\n"), nil
 }
 
@@ -1562,7 +1549,6 @@ func tomlRenderTable(i *interpreter, v *valueObject, sindent string, path []stri
 		res = res + tomlEncodeKey(element)
 	}
 	res = res + "]"
-	// TODO: with or without hidden?
 	if len(objectFields(v, withoutHidden)) > 0 {
 		res = res + "\n"
 	}
@@ -1594,25 +1580,12 @@ func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []st
 			return "", err
 		}
 
-		childIndexedPath := make([]string, 0, len(indexedPath)+1)
-		childIndexedPath = append(childIndexedPath, indexedPath...)
-		childIndexedPath = append(childIndexedPath, fieldName)
+		childIndexedPath := tomlAddToPath(indexedPath, fieldName)
 
 		if isSection {
-			// local sections = [std.join('\n', kvp)] + [
-			// 	(if std.isObject(v[k]) then
-			// 		renderTable(v[k], path + [k], indexedPath + [k], cindent)
-			// 	else
-			// 		renderTableArray(v[k], path + [k], indexedPath + [k], cindent)
-			// 	)
-			// 	for k in std.objectFields(v)
-			// 	if isSection(v[k])
-			// ];
-			// std.join('\n\n', sections),
+			// render as section and add to array of sections
 
-			childPath := make([]string, 0, len(path)+1)
-			childPath = append(childPath, path...)
-			childPath = append(childPath, fieldName)
+			childPath := tomlAddToPath(path, fieldName)
 
 			switch fv := fieldValue.(type) {
 			case *valueObject:
@@ -1631,11 +1604,7 @@ func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []st
 				return "", i.Error(fmt.Sprintf("invalid type for section: %v", reflect.TypeOf(fieldValue)))
 			}
 		} else {
-			// local kvp = std.flattenArrays([
-			// 	[cindent + escapeKeyToml(k) + ' = ' + renderValue(v[k], indexedPath + [k], false, cindent)]
-			// 	for k in std.objectFields(v)
-			// 	if !isSection(v[k])
-			// ]);
+			// render as value and append to result fields
 
 			renderedValue, err := tomlRenderValue(i, fieldValue, sindent, childIndexedPath, false, "")
 			if err != nil {
@@ -1645,7 +1614,7 @@ func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []st
 		}
 	}
 
-	// TODO: +cindent for resSections?
+	// create the result string
 	res := ""
 
 	if len(resFields) > 0 {
